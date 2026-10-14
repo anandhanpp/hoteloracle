@@ -1,9 +1,9 @@
 {
   "rewrites": [
     {
-      "source":"/api/:path*",
+      "source": "/api/:path*",
       "destination": "https://hoteloracle-oms3axrkt-swipe7.vercel.app/api/:path*"
-    }
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
