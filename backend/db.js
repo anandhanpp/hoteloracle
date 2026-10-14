@@ -47,6 +47,7 @@ const connect = async () => {
     const options = {
       serverSelectionTimeoutMS: 10000,
       maxPoolSize: 10,
+      dbName: 'hotel_db',
     };
 
     cached.promise = mongoose.connect(uri, options).then((mongooseInstance) => {

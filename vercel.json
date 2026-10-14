@@ -1,23 +1,15 @@
 {
   "rewrites": [
     {
-<<<<<<< HEAD
-      "source": "/api/:path*",
-      "destination": "https://hoteloracle.vercel.app/api/:path*"
-    },
-    {
-      "source": "/(.*)",
-=======
       "source": "/api",
       "destination": "/api/index.js"
     },
     {
-      "source": "/api/(.*)",
+      "source": "/api/:path*",
       "destination": "/api/index.js"
     },
     {
       "source": "/((?!api/).*)",
->>>>>>> d0792bd (update server.js routes)
       "destination": "/index.html"
     }
   ]
