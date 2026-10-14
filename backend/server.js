@@ -42,10 +42,16 @@ app.get('/api/db-test', (_req, res) => {
   return res.status(500).json({ status: 'error', message: `MongoDB state: ${state}` });
 });
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
-(async () => {
-  await connect();                         // connect to MongoDB Atlas first
+// ── Bootstrap & Export ────────────────────────────────────────────────────────
+// Initialize MongoDB Atlas connection
+connect();
+
+// Run standard listener for local development
+if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`✅  Server listening on http://localhost:${PORT}`);
   });
-})();
+}
+
+// Strictly required by Vercel to run Express as a serverless function
+module.exports = app;
