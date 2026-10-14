@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, CreditCard, Plus, Printer, RefreshCw,
-  Loader2, AlertCircle, ChevronDown, X, Receipt,
+  Loader2, AlertCircle, Receipt,
   User, Calendar, Bed, Hash,
 } from 'lucide-react';
 import PostChargeModal from './PostChargeModal';

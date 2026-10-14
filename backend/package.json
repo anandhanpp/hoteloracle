@@ -1,14 +1,15 @@
 {
   "name": "oracle-project-backend",
   "version": "1.0.0",
-  "description": "Express backend for Oracle Project",
+  "description": "Express backend for Oracle Hospitality PMS with MongoDB Atlas",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "seed": "node seed_atlas.js"
   },
-  "keywords": [],
+  "keywords": ["oracle-hospitality", "hotel-pms", "express", "mongodb"],
   "author": "",
   "license": "ISC",
   "dependencies": {

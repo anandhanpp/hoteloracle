@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   DoorOpen, CheckCircle2, AlertTriangle, X, Loader2,
-  User, Calendar, Bed, Sparkles, Hash,
+  User, Calendar, Bed, Sparkles,
 } from 'lucide-react';
 import { useReservationSync } from '../context/ReservationContext';
 

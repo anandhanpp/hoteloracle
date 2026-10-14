@@ -1,18 +1,28 @@
 {
   "name": "oracle-project",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "workspaces": [
+    "backend"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:server": "cd backend && npx nodemon server.js",
     "build": "vite build",
-    "lint": "oxlint",
+    "lint": "oxlint src",
+    "seed": "node backend/seed_atlas.js",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.45.0",
+    "mongoose": "^9.11.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.3",
@@ -28,8 +38,7 @@
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   },
-  "description": "This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.",
-  "main": "index.js",
+  "description": "Oracle Hospitality Cloud PMS web application with Express and MongoDB Atlas",
   "keywords": [],
   "author": "",
   "license": "ISC"

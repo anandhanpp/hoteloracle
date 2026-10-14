@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
   Sparkles, AlertTriangle, Wrench, RefreshCw, Loader2,
-  CheckCircle2, X, Search, Filter, Bed, User, ShieldAlert,
-  ArrowRight, ShieldCheck, Check,
+  CheckCircle2, X, Search, Bed, User,
+  Check,
 } from 'lucide-react';
 import { useReservationSync } from '../context/ReservationContext';
 

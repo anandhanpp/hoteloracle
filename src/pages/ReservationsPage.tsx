@@ -370,7 +370,7 @@ export default function ReservationsPage(){
   const someSelected=filtered.some(r=>selectedIds.has(r.id));
   const selectedGuests=reservations.filter(r=>selectedIds.has(r.id));
   const toggleAll=()=>{if(allSelected){setSelectedIds(p=>{const n=new Set(p);filtered.forEach(r=>n.delete(r.id));return n;});}else{setSelectedIds(p=>{const n=new Set(p);filtered.forEach(r=>n.add(r.id));return n;});}};
-  const toggleRow=(id:number)=>setSelectedIds(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n;});
+  const toggleRow=(id:number)=>setSelectedIds(p=>{const n=new Set(p);if(n.has(id)){n.delete(id);}else{n.add(id);}return n;});
   const handleProcess=()=>{if(selectedGuests.length===0)return;setProcessing(true);setTimeout(()=>handlePrint(),80);};
   const destinationIcon={Print:<Printer style={{width:14,height:14}}/>,Preview:<Eye style={{width:14,height:14}}/>,Email:<Mail style={{width:14,height:14}}/>}[destination];
 
