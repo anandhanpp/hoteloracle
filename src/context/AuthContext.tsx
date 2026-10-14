@@ -2,9 +2,10 @@ import { createContext, useContext, useState, useCallback, ReactNode } from 'rea
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface AuthUser {
-  id: number;
+  id?: number | string;
   username: string;
   role: string;
+  token?: string;
 }
 
 interface AuthContextValue {
@@ -19,6 +20,8 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 // ── Helper: read persisted auth from localStorage ─────────────────────────────
+// [TEMPORARY BYPASS] Commented out to prevent overwriting hardcoded bypass user
+/*
 function readStoredAuth(): { user: AuthUser | null; token: string | null } {
   try {
     const token = localStorage.getItem('oracle_token');
@@ -27,16 +30,26 @@ function readStoredAuth(): { user: AuthUser | null; token: string | null } {
       return { token, user: JSON.parse(raw) as AuthUser };
     }
   } catch {
-    /* ignore malformed data */
+    // ignore malformed data
   }
   return { user: null, token: null };
 }
+*/
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const stored = readStoredAuth();
-  const [user,  setUser]  = useState<AuthUser | null>(stored.user);
-  const [token, setToken] = useState<string | null>(stored.token);
+  // [TEMPORARY BYPASS] Hardcode admin user and bypass token
+  const bypassUser: AuthUser = {
+    username: 'admin',
+    role: 'Admin',
+    token: 'temporary-bypass-token',
+  };
+
+  const [user, setUser]   = useState<AuthUser | null>(bypassUser);
+  const [token, setToken] = useState<string | null>('temporary-bypass-token');
+
+  // [TEMPORARY BYPASS] Any useEffect checking localStorage on load is disabled/omitted
+  // to avoid accidentally resetting the hardcoded user to null.
 
   const login = useCallback(async (username: string, password: string) => {
     const res = await fetch('/api/auth/login', {
@@ -67,7 +80,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        login,
+        logout,
+        isAuthenticated: true, // [TEMPORARY BYPASS] Always true
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
