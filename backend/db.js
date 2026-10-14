@@ -1,29 +1,29 @@
-require('dotenv').config();
-const mysql = require('mysql2/promise');
+// ── backend/db.js ─────────────────────────────────────────────────────────────
+// Mongoose connection singleton.
+// All models import this file to ensure connect() is called once.
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const mongoose = require('mongoose');
 
-// ── Connection pool ─────────────────────────────────────────────────────────
-// Using a pool (not a single connection) so concurrent API requests
-// each get their own connection without queuing.
-const pool = mysql.createPool({
-  host:               process.env.DB_HOST     || 'localhost',
-  user:               process.env.DB_USER     || 'root',
-  password:           process.env.DB_PASSWORD || '',
-  database:           process.env.DB_NAME     || 'hotel_db',
-  waitForConnections: true,
-  connectionLimit:    10,
-  queueLimit:         0,
-});
+const MONGO_URI = process.env.MONGO_URI;
 
-// ── Startup connectivity check ──────────────────────────────────────────────
-// Fire-and-forget ping so we know the pool can actually reach MySQL.
-(async () => {
+if (!MONGO_URI || MONGO_URI.includes('<USERNAME>')) {
+  console.error('❌  MONGO_URI is not set in .env — please add your Atlas connection string.');
+  process.exit(1);
+}
+
+mongoose.set('strictQuery', true);
+
+const connect = async () => {
   try {
-    await pool.query('SELECT 1');
-    console.log('✅  MySQL pool connected to', process.env.DB_NAME || 'hotel_db');
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 10000,
+    });
+    console.log(`✅  MongoDB connected → ${mongoose.connection.name}`);
   } catch (err) {
-    console.error('❌  MySQL connection failed:', err.message);
+    console.error('❌  MongoDB connection failed:', err.message);
     process.exit(1);
   }
-})();
+};
 
-module.exports = pool;
+module.exports = { connect, mongoose };

@@ -1,94 +1,91 @@
 // ── backend/routes/inventory.js ──────────────────────────────────────────────
 // GET /api/inventory/breakdown  – real-time room availability per category
-const express = require('express');
-const pool    = require('../db');
+// Uses MongoDB $aggregate to replicate the SQL GROUP BY + LEFT JOIN logic.
+const express  = require('express');
+const RoomType = require('../models/RoomType');
+const Room     = require('../models/Room');
+const Reservation = require('../models/Reservation');
 
 const router = express.Router();
 
 // ── GET /api/inventory/breakdown ─────────────────────────────────────────────
-// Returns per-room-type totals, occupied count (Checked In today), and
-// available count, plus a property-wide summary row.
-//
-// Response shape:
-// {
-//   summary : { total, occupied, available, occupancy_pct },
-//   breakdown: [
-//     { type_code, name, base_price, total_rooms, occupied_rooms,
-//       available_rooms, ooo_rooms, occupancy_pct },
-//     ...
-//   ]
-// }
 router.get('/breakdown', async (_req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const today     = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayEnd   = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const asOf       = today.toISOString().slice(0, 10);
 
-    const sql = `
-      SELECT
-        rt.id              AS type_id,
-        rt.type_code,
-        rt.name,
-        rt.base_price,
+    // ── Step 1: Get all room types ──────────────────────────────────────────
+    const roomTypes = await RoomType.find().sort({ _id: 1 }).lean();
 
-        -- Total physical rooms of this type
-        COUNT(r.id)        AS total_rooms,
+    // ── Step 2: Aggregate room counts + OOO per room type ──────────────────
+    const roomAgg = await Room.aggregate([
+      {
+        $group: {
+          _id:       '$room_type_id',
+          total:     { $sum: 1 },
+          ooo:       { $sum: { $cond: [{ $eq: ['$maintenance_status', 'OOO'] }, 1, 0] } },
+          room_ids:  { $push: '$_id' },
+        },
+      },
+    ]);
+    // Map: roomTypeId -> { total, ooo, room_ids }
+    const roomStatMap = Object.fromEntries(
+      roomAgg.map(r => [r._id?.toString(), r])
+    );
 
-        -- Out-of-order rooms (maintenance_status = 'OOO')
-        SUM(CASE WHEN r.maintenance_status = 'OOO' THEN 1 ELSE 0 END) AS ooo_rooms,
+    // ── Step 3: Find all checked-in reservations covering today ────────────
+    // "Checked In" + arrival <= today < departure
+    const checkedIn = await Reservation.find({
+      status:        'Checked In',
+      arrival_date:  { $lt: todayEnd   },
+      departure_date:{ $gte: todayStart },
+    }).select('room_id').lean();
 
-        -- Rooms currently occupied: linked to a Checked-In reservation
-        -- where today falls within the stay window
-        SUM(
-          CASE
-            WHEN res.id IS NOT NULL
-             AND res.status = 'Checked In'
-             AND res.arrival_date   <= ?
-             AND res.departure_date >= ?
-            THEN 1
-            ELSE 0
-          END
-        ) AS occupied_rooms
+    // Set of occupied room_ids (as strings)
+    const occupiedRoomIds = new Set(
+      checkedIn.map(r => r.room_id?.toString()).filter(Boolean)
+    );
 
-      FROM room_types rt
-      LEFT JOIN rooms r
-        ON r.room_type_id = rt.id
-      LEFT JOIN reservations res
-        ON res.room_id = r.id
-       AND res.status = 'Checked In'
-       AND res.arrival_date   <= ?
-       AND res.departure_date >= ?
+    // ── Step 4: Count occupied rooms per room type ──────────────────────────
+    // Map roomType ObjectId -> occupied count
+    const allRooms = await Room.find({
+      _id: { $in: [...occupiedRoomIds].map(id => id) },
+    }).select('_id room_type_id').lean();
 
-      GROUP BY rt.id, rt.type_code, rt.name, rt.base_price
-      ORDER BY rt.id ASC
-    `;
+    const occupiedByType = {};
+    allRooms.forEach(r => {
+      const tid = r.room_type_id?.toString();
+      if (tid) occupiedByType[tid] = (occupiedByType[tid] ?? 0) + 1;
+    });
 
-    const [rows] = await pool.execute(sql, [today, today, today, today]);
-
-    // Compute derived fields
-    const breakdown = rows.map(row => {
-      const total     = Number(row.total_rooms);
-      const ooo       = Number(row.ooo_rooms);
-      const occupied  = Number(row.occupied_rooms);
-      const sellable  = total - ooo;             // rooms that can be sold
+    // ── Step 5: Build response ──────────────────────────────────────────────
+    const breakdown = roomTypes.map(rt => {
+      const tid      = rt._id.toString();
+      const stats    = roomStatMap[tid] ?? { total: 0, ooo: 0 };
+      const total    = stats.total;
+      const ooo      = stats.ooo;
+      const occupied = occupiedByType[tid] ?? 0;
+      const sellable = total - ooo;
       const available = Math.max(0, sellable - occupied);
-      const pct       = sellable > 0
-        ? Math.round((occupied / sellable) * 100)
-        : 0;
+      const pct      = sellable > 0 ? Math.round((occupied / sellable) * 100) : 0;
 
       return {
-        type_id:        row.type_id,
-        type_code:      row.type_code,
-        name:           row.name,
-        base_price:     parseFloat(row.base_price),
-        total_rooms:    total,
-        ooo_rooms:      ooo,
-        sellable_rooms: sellable,
-        occupied_rooms: occupied,
+        type_id:         rt._id,
+        type_code:       rt.type_code,
+        name:            rt.name,
+        base_price:      rt.base_price,
+        total_rooms:     total,
+        ooo_rooms:       ooo,
+        sellable_rooms:  sellable,
+        occupied_rooms:  occupied,
         available_rooms: available,
-        occupancy_pct:  pct,
+        occupancy_pct:   pct,
       };
     });
 
-    // Property-wide summary
+    // ── Step 6: Property-wide summary ───────────────────────────────────────
     const summary = breakdown.reduce(
       (acc, r) => {
         acc.total    += r.total_rooms;
@@ -104,7 +101,7 @@ router.get('/breakdown', async (_req, res) => {
       ? Math.round((summary.occupied / summary.sellable) * 100)
       : 0;
 
-    return res.json({ summary, breakdown, as_of: today });
+    return res.json({ summary, breakdown, as_of: asOf });
   } catch (err) {
     console.error('Error fetching inventory breakdown:', err.message);
     return res.status(500).json({ status: 'error', message: err.message });
