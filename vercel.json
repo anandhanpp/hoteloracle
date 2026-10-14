@@ -1,15 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/api",
-      "destination": "/api/index.js"
-    },
-    {
       "source": "/api/:path*",
-      "destination": "/api/index.js"
+      "destination": "https://hoteloracle.vercel.app/api/:path*"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
