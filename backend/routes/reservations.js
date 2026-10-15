@@ -11,13 +11,22 @@ async function enrich(res) {
   const obj = res.toObject ? res.toObject() : { ...res };
   obj.id = obj._id;          // keep numeric-style id field the frontend expects
 
+  const checkIn = obj.checkInTime || obj.check_in_time || null;
+  const checkOut = obj.checkOutTime || obj.check_out_time || null;
+  obj.checkInTime = checkIn;
+  obj.check_in_time = checkIn;
+  obj.checkOutTime = checkOut;
+  obj.check_out_time = checkOut;
+
   if (obj.room_id) {
     const room = await Room.findById(obj.room_id).lean();
-    obj.room_number              = room?.room_number ?? null;
+    obj.room_number              = room?.room_number ?? obj.room_number ?? null;
     obj.room_housekeeping_status = room?.housekeeping_status ?? null;
     obj.room_maintenance_status  = room?.maintenance_status ?? null;
   } else {
-    obj.room_number = obj.room_housekeeping_status = obj.room_maintenance_status = null;
+    obj.room_number = obj.room_number ?? null;
+    obj.room_housekeeping_status = null;
+    obj.room_maintenance_status = null;
   }
   return obj;
 }
@@ -65,10 +74,16 @@ router.get('/', async (req, res) => {
 
     const enriched = reservations.map(r => {
       const room = r.room_id ? roomMap[r.room_id.toString()] : null;
+      const checkIn = r.checkInTime || r.check_in_time || null;
+      const checkOut = r.checkOutTime || r.check_out_time || null;
       return {
         ...r,
         id: r._id,
-        room_number:              room?.room_number ?? null,
+        checkInTime: checkIn,
+        check_in_time: checkIn,
+        checkOutTime: checkOut,
+        check_out_time: checkOut,
+        room_number:              room?.room_number ?? r.room_number ?? null,
         room_housekeeping_status: room?.housekeeping_status ?? null,
         room_maintenance_status:  room?.maintenance_status ?? null,
       };
@@ -88,9 +103,10 @@ router.post('/', async (req, res) => {
       guest_name, confirmation_number, phone_number = null,
       membership_tier = 'None', room_type, arrival_date, departure_date,
       adults = 1, children = 0, status = 'Confirmed',
-      check_in_time = null, check_out_time = null, room_rate = 0,
-      payment_mode = 'Credit Card', reservation_source = 'Direct',
-      billing_option = 'Guest Account', room_id = null,
+      check_in_time = null, check_out_time = null,
+      checkInTime = null, checkOutTime = null,
+      room_rate = 0, payment_mode = 'Credit Card', reservation_source = 'Direct',
+      billing_option = 'Guest Account', room_id = null, room_number = null,
     } = req.body;
 
     if (!guest_name || !confirmation_number || !room_type || !arrival_date || !departure_date) {
@@ -100,15 +116,40 @@ router.post('/', async (req, res) => {
       });
     }
 
+    const { mongoose } = require('../db');
+    let resolvedRoomId = room_id || null;
+    let resolvedRoomNumber = room_number || null;
+
+    if (resolvedRoomId && mongoose.isValidObjectId(resolvedRoomId)) {
+      const roomDoc = await Room.findById(resolvedRoomId);
+      if (roomDoc) {
+        resolvedRoomNumber = roomDoc.room_number;
+      }
+    } else if (resolvedRoomNumber) {
+      const roomDoc = await Room.findOne({ room_number: String(resolvedRoomNumber).trim() });
+      if (roomDoc) {
+        resolvedRoomId = roomDoc._id;
+        resolvedRoomNumber = roomDoc.room_number;
+      }
+    }
+
+    const initialCheckIn = checkInTime || check_in_time || (status === 'Checked In' ? new Date() : null);
+    const initialCheckOut = checkOutTime || check_out_time || (status === 'Checked Out' ? new Date() : null);
+
     const reservation = await Reservation.create({
-      room_id: room_id || null,
+      room_id: resolvedRoomId,
+      room_number: resolvedRoomNumber,
       guest_name,
       confirmation_number: confirmation_number.toUpperCase(),
       phone_number, membership_tier, room_type,
       arrival_date: new Date(arrival_date),
       departure_date: new Date(departure_date),
       adults: Number(adults), children: Number(children),
-      status, check_in_time, check_out_time,
+      status,
+      checkInTime: initialCheckIn,
+      check_in_time: initialCheckIn,
+      checkOutTime: initialCheckOut,
+      check_out_time: initialCheckOut,
       room_rate: Number(room_rate),
       payment_mode, reservation_source, billing_option,
     });
@@ -131,10 +172,38 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ status: 'error', message: `Reservation ${req.params.id} not found.` });
     }
 
+    // Resolve room assignment (room_id or room_number)
+    const { mongoose } = require('../db');
+    if (req.body.room_id !== undefined || req.body.room_number !== undefined) {
+      let roomDoc = null;
+      if (req.body.room_id && mongoose.isValidObjectId(req.body.room_id)) {
+        roomDoc = await Room.findById(req.body.room_id);
+      }
+      if (!roomDoc && req.body.room_number) {
+        roomDoc = await Room.findOne({ room_number: String(req.body.room_number).trim() });
+      }
+      if (roomDoc) {
+        req.body.room_id = roomDoc._id;
+        req.body.room_number = roomDoc.room_number;
+        current.room_id = roomDoc._id;
+        current.room_number = roomDoc.room_number;
+      }
+    }
+
     // Auto-timestamps on status transition
     const newStatus = req.body.status ?? current.status;
-    if (newStatus === 'Checked In'  && current.status !== 'Checked In'  && !req.body.check_in_time)  req.body.check_in_time  = new Date();
-    if (newStatus === 'Checked Out' && current.status !== 'Checked Out' && !req.body.check_out_time) req.body.check_out_time = new Date();
+    const now = new Date();
+
+    if (newStatus === 'Checked In') {
+      const ts = req.body.checkInTime || req.body.check_in_time || (current.status !== 'Checked In' ? now : current.checkInTime || now);
+      req.body.checkInTime = ts;
+      req.body.check_in_time = ts;
+    }
+    if (newStatus === 'Checked Out') {
+      const ts = req.body.checkOutTime || req.body.check_out_time || (current.status !== 'Checked Out' ? now : current.checkOutTime || now);
+      req.body.checkOutTime = ts;
+      req.body.check_out_time = ts;
+    }
 
     // If checking out, mark the room dirty
     if (newStatus === 'Checked Out' && current.room_id) {
@@ -150,7 +219,7 @@ router.put('/:id', async (req, res) => {
     Object.assign(current, req.body);
     await current.save();
 
-    console.log(`✏️  Reservation ${current._id} updated → status: "${current.status}"`);
+    console.log(`✏️  Reservation ${current._id} updated → room: "${current.room_number}", status: "${current.status}", in: ${current.checkInTime}, out: ${current.checkOutTime}`);
     res.json(await enrich(current));
   } catch (err) {
     if (err.code === 11000) {

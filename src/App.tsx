@@ -3,7 +3,9 @@ import { ReservationProvider } from './context/ReservationContext';
 import { AuthProvider } from './context/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import Layout from './components/Layout';
+import DashboardPage from './pages/DashboardPage';
 import ArrivalsPage from './pages/ArrivalsPage';
+import DeparturesPage from './pages/DeparturesPage';
 import ReservationsPage from './pages/ReservationsPage';
 import GuestsPage from './pages/GuestsPage';
 import TodoPage from './pages/TodoPage';
@@ -32,8 +34,14 @@ export default function App() {
             {/* All routes below require a valid JWT */}
             <Route element={<PrivateRoute />}>
               <Route element={<Layout />}>
+                {/* Default landing page (Analytics Dashboard) */}
+                <Route index element={<DashboardPage />} />
+                <Route path="home" element={<DashboardPage />} />
+                <Route path="dashboard" element={<DashboardPage />} />
+
                 {/* Tab bar pages */}
-                <Route index element={<ArrivalsPage />} />
+                <Route path="arrivals" element={<ArrivalsPage />} />
+                <Route path="departures" element={<DeparturesPage />} />
                 <Route path="reservations" element={<ReservationsPage />} />
                 <Route path="guests" element={<GuestsPage />} />
                 <Route path="todo" element={<TodoPage />} />

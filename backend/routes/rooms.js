@@ -56,21 +56,32 @@ router.get('/', async (req, res) => {
 });
 
 // ── GET /api/rooms/available ──────────────────────────────────────────────────
-// Inspected + Active + not currently occupied, filtered by room_type.
+// Inspected / Clean + Active + not currently occupied, filtered strictly by room_type.
 router.get('/available', async (req, res) => {
   try {
-    const { room_type } = req.query;
+    const { room_type, housekeeping_status } = req.query;
 
     // Find occupied room IDs
     const occupied = await Reservation.find({ status: 'Checked In' }).select('room_id').lean();
     const occupiedIds = occupied.map(r => r.room_id).filter(Boolean);
 
     const filter = {
-      housekeeping_status: 'Inspected',
       maintenance_status: { $nin: ['OOO', 'OOS'] },
       _id: { $nin: occupiedIds },
     };
-    if (room_type) filter.room_type = room_type;
+
+    if (housekeeping_status) {
+      if (housekeeping_status !== 'all') {
+        filter.housekeeping_status = housekeeping_status;
+      }
+    } else {
+      // Return both Inspected and Clean rooms by default so staff have available choices
+      filter.housekeeping_status = { $in: ['Inspected', 'Clean'] };
+    }
+
+    if (room_type) {
+      filter.room_type = new RegExp(`^${room_type.trim()}$`, 'i');
+    }
 
     const rooms = await Room.find(filter).sort({ room_number: 1 }).lean();
     res.json(rooms.map(r => ({ ...r, id: r._id })));

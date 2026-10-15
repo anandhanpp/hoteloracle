@@ -4,6 +4,7 @@ const reservationSchema = new mongoose.Schema(
   {
     // Physical room assignment (nullable until check-in)
     room_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Room', default: null },
+    room_number: { type: String, default: null, trim: true },
 
     // Core guest info
     guest_name:          { type: String, required: true, trim: true },
@@ -28,6 +29,9 @@ const reservationSchema = new mongoose.Schema(
       enum: ['Confirmed', 'Checked In', 'Checked Out', 'Pending'],
       default: 'Confirmed',
     },
+    // Exact check-in and check-out timestamps
+    checkInTime:    { type: Date, default: null },
+    checkOutTime:   { type: Date, default: null },
     check_in_time:  { type: Date, default: null },
     check_out_time: { type: Date, default: null },
 
@@ -57,9 +61,17 @@ reservationSchema.pre('save', function () {
   if (this.departure_date <= this.arrival_date) {
     throw new Error('departure_date must be after arrival_date.');
   }
-  // Auto-timestamps on status
-  if (this.status === 'Checked In'  && !this.check_in_time)  this.check_in_time  = new Date();
-  if (this.status === 'Checked Out' && !this.check_out_time) this.check_out_time = new Date();
+  // Auto-timestamps on status change
+  if (this.status === 'Checked In') {
+    const ts = this.checkInTime || this.check_in_time || new Date();
+    this.checkInTime = ts;
+    this.check_in_time = ts;
+  }
+  if (this.status === 'Checked Out') {
+    const ts = this.checkOutTime || this.check_out_time || new Date();
+    this.checkOutTime = ts;
+    this.check_out_time = ts;
+  }
 });
 
 module.exports = mongoose.model('Reservation', reservationSchema);
