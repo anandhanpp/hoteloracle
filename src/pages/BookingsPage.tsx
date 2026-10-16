@@ -58,6 +58,50 @@ const fmt = (iso: string) => {
 const nightsBetween = (a: string, b: string) =>
     Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86_400_000));
 
+/**
+ * Combines a calendar date and an optional time/datetime into a unified Date object.
+ * Extracts date (YYYY-MM-DD) from dateVal and time (HH:mm:ss) from timeVal.
+ */
+const combineDateAndTime = (dateVal: string | Date, timeVal?: string | Date | null, defaultTime = "00:00:00"): Date | null => {
+    if (!dateVal) return null;
+    let dateStr = "";
+    if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+        dateStr = dateVal.toISOString().slice(0, 10);
+    } else if (typeof dateVal === "string") {
+        dateStr = dateVal.slice(0, 10);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+
+    let timeStr = defaultTime;
+    if (timeVal instanceof Date && !isNaN(timeVal.getTime())) {
+        timeStr = timeVal.toISOString().slice(11, 19);
+    } else if (typeof timeVal === "string" && timeVal.trim() !== "") {
+        const trimmed = timeVal.trim();
+        if (trimmed.includes("T")) {
+            const match = trimmed.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+            if (match) timeStr = `${match[1]}:${match[2]}:${match[3] || "00"}`;
+        } else if (/^\d{1,2}:\d{2}/.test(trimmed)) {
+            const parts = trimmed.split(":");
+            timeStr = `${parts[0].padStart(2, "0")}:${(parts[1] || "00").padStart(2, "0")}:${((parts[2] || "00").slice(0, 2)).padStart(2, "0")}`;
+        }
+    }
+    const dt = new Date(`${dateStr}T${timeStr}.000Z`);
+    return isNaN(dt.getTime()) ? null : dt;
+};
+
+const formatForDateTimeLocal = (val?: string | null): string => {
+    if (!val) return "";
+    try {
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return "";
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch {
+        return "";
+    }
+};
+
+
 const STATUS_META: Record<string, { bg: string; text: string; border: string; icon: React.ReactNode }> = {
     "Confirmed": { bg: "#e8f4fd", text: "#1a6fa0", border: "#a8cfe8", icon: <CheckCircle2 style={{ width: 11, height: 11 }} /> },
     "Checked In": { bg: "#e6f9f0", text: "#1a7a4a", border: "#9ad8bc", icon: <LogIn style={{ width: 11, height: 11 }} /> },
@@ -131,6 +175,7 @@ interface ModalProps {
 
 function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
   const [form,setForm]=useState<FormData>(initial);
+  const [localError, setLocalError] = useState<string | null>(null);
   const set=(k:keyof FormData,v:string|number)=>setForm(f=>({...f,[k]:v}));
 
   let lateFee = 0;
@@ -145,6 +190,32 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
     }
   }
 
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+
+    const arrivalDT = combineDateAndTime(form.arrival_date, form.check_in_time, "00:00:00");
+    const departureDT = combineDateAndTime(form.departure_date, form.check_out_time, "00:00:00");
+
+    if (!arrivalDT || !departureDT) {
+      setLocalError("Please enter valid arrival and departure dates.");
+      return;
+    }
+
+    if (departureDT.getTime() <= arrivalDT.getTime()) {
+      if (form.arrival_date === form.departure_date) {
+        setLocalError("For same-day stays, check-out time must be chronologically after check-in time.");
+      } else {
+        setLocalError("Departure date and time must be chronologically after arrival date and time.");
+      }
+      return;
+    }
+
+    onSubmit(form);
+  };
+
+  const displayedError = localError || error;
+
   return(
     <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(10,25,45,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,backdropFilter:"blur(2px)"}}>
       <div style={{background:"#fff",borderRadius:6,width:"100%",maxWidth:580,boxShadow:"0 20px 60px rgba(0,0,0,0.3)",overflow:"hidden",animation:"slideUp 0.18s ease-out"}}>
@@ -155,8 +226,8 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
           </div>
           <button id="modal-close-btn" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#7db8d8",padding:4,display:"flex"}}><X style={{width:18,height:18}}/></button>
         </div>
-        <form onSubmit={e=>{e.preventDefault();onSubmit(form);}} style={{padding:"22px 24px",display:"flex",flexDirection:"column",gap:16}}>
-          {error&&<div style={{background:"#fdf0f0",border:"1px solid #f0a0a0",borderRadius:4,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#c0392b"}}><AlertCircle style={{width:14,height:14,flexShrink:0}}/>{error}</div>}
+        <form onSubmit={handleFormSubmit} style={{padding:"22px 24px",display:"flex",flexDirection:"column",gap:16}}>
+          {displayedError&&<div style={{background:"#fdf0f0",border:"1px solid #f0a0a0",borderRadius:4,padding:"10px 14px",display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#c0392b"}}><AlertCircle style={{width:14,height:14,flexShrink:0}}/>{displayedError}</div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
             <FormField label="Guest Name" id="modal-guest-name" required>
               <input id="modal-guest-name" type="text" required value={form.guest_name} onChange={e=>set("guest_name",e.target.value)} placeholder="Full name" style={INP}/>
@@ -208,7 +279,7 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
               </div>
             </FormField>
           </div>
-          {/* ── New fields ── */}
+          {/* ── Additional fields ── */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
             <FormField label="Phone Number" id="modal-phone">
               <input id="modal-phone" type="tel" value={form.phone_number||""} onChange={e=>set("phone_number",e.target.value)} style={INP} placeholder="+1 234 567 8900"/>
@@ -224,10 +295,10 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
             <FormField label="Check-In Time" id="modal-check-in-time">
-              <input id="modal-check-in-time" type="datetime-local" value={form.check_in_time?new Date(form.check_in_time).toISOString().slice(0,16):""} onChange={e=>set("check_in_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
+              <input id="modal-check-in-time" type="datetime-local" value={formatForDateTimeLocal(form.check_in_time)} onChange={e=>set("check_in_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
             </FormField>
             <FormField label="Check-Out Time" id="modal-check-out-time">
-              <input id="modal-check-out-time" type="datetime-local" value={form.check_out_time?new Date(form.check_out_time).toISOString().slice(0,16):""} onChange={e=>set("check_out_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
+              <input id="modal-check-out-time" type="datetime-local" value={formatForDateTimeLocal(form.check_out_time)} onChange={e=>set("check_out_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
             </FormField>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
@@ -272,7 +343,11 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
           {form.arrival_date&&form.departure_date&&(
             <div style={{background:"#f0f7ff",borderRadius:4,padding:"8px 14px",display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#1a6fa0"}}>
               <CalendarDays style={{width:14,height:14}}/>
-              <strong>{nightsBetween(form.arrival_date,form.departure_date)}</strong> night(s) · <strong>{form.adults}</strong> adult(s){form.children>0&&<>, <strong>{form.children}</strong> child(ren)</>}
+              {form.arrival_date === form.departure_date ? (
+                <span><strong>Day-Use Stay (Same Day)</strong> · <strong>{form.adults}</strong> adult(s){form.children>0&&<>, <strong>{form.children}</strong> child(ren)</>}</span>
+              ) : (
+                <span><strong>{nightsBetween(form.arrival_date,form.departure_date)}</strong> night(s) · <strong>{form.adults}</strong> adult(s){form.children>0&&<>, <strong>{form.children}</strong> child(ren)</>}</span>
+              )}
             </div>
           )}
           {lateFee > 0 && (
@@ -400,8 +475,26 @@ export default function BookingsPage() {
     };
 
     const initialForm: FormData = editTarget
-        ? { guest_name: editTarget.guest_name, confirmation_number: editTarget.confirmation_number, room_type: editTarget.room_type, arrival_date: editTarget.arrival_date.slice(0, 10), departure_date: editTarget.departure_date.slice(0, 10), adults: editTarget.adults, children: editTarget.children, status: editTarget.status }
+        ? {
+            guest_name: editTarget.guest_name,
+            confirmation_number: editTarget.confirmation_number,
+            phone_number: editTarget.phone_number ?? "",
+            membership_tier: editTarget.membership_tier ?? "None",
+            check_in_time: editTarget.check_in_time ?? "",
+            check_out_time: editTarget.check_out_time ?? "",
+            room_type: editTarget.room_type,
+            arrival_date: editTarget.arrival_date.slice(0, 10),
+            departure_date: editTarget.departure_date.slice(0, 10),
+            adults: editTarget.adults,
+            children: editTarget.children,
+            status: editTarget.status,
+            room_rate: editTarget.room_rate ?? 0,
+            payment_mode: editTarget.payment_mode ?? "Credit Card",
+            reservation_source: editTarget.reservation_source ?? "Direct",
+            billing_option: editTarget.billing_option ?? "Guest Account",
+        }
         : EMPTY_FORM;
+
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#f4f6f9", fontFamily: "'Inter','Segoe UI',sans-serif" }}>
@@ -497,7 +590,7 @@ export default function BookingsPage() {
                                             <td style={{ padding: "10px 14px", color: "#445566" }}>{r.room_type}</td>
                                             <td style={{ padding: "10px 14px", color: "#445566", whiteSpace: "nowrap" }}>{fmt(r.arrival_date)}</td>
                                             <td style={{ padding: "10px 14px", color: "#445566", whiteSpace: "nowrap" }}>{fmt(r.departure_date)}</td>
-                                            <td style={{ padding: "10px 14px", color: "#445566", textAlign: "center" }}>{nights}</td>
+                                            <td style={{ padding: "10px 14px", color: nights === 0 ? "#1a6fa0" : "#445566", textAlign: "center", fontWeight: nights === 0 ? 600 : 400, fontSize: nights === 0 ? 11 : 12 }}>{nights === 0 ? "Day Use" : nights}</td>
                                             <td style={{ padding: "10px 14px", color: "#445566", textAlign: "center", whiteSpace: "nowrap" }}>
                                                 <span title="Adults" style={{ fontSize: 12 }}>👤 {r.adults}</span>
                                                 {r.children > 0 && <span title="Children" style={{ fontSize: 12, marginLeft: 6 }}>🧒 {r.children}</span>}

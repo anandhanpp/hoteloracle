@@ -56,11 +56,63 @@ const reservationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Validation: departure must be after arrival
-reservationSchema.pre('save', function () {
-  if (this.departure_date <= this.arrival_date) {
-    throw new Error('departure_date must be after arrival_date.');
+/**
+ * Combines a calendar date and an optional time/datetime into a unified Date object.
+ * Extracts date (YYYY-MM-DD) from dateVal and time (HH:mm:ss) from timeVal.
+ */
+function combineDateAndTime(dateVal, timeVal, defaultTime = '00:00:00') {
+  if (!dateVal) return null;
+
+  // Extract YYYY-MM-DD
+  let dateStr = '';
+  if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+    dateStr = dateVal.toISOString().slice(0, 10);
+  } else if (typeof dateVal === 'string') {
+    dateStr = dateVal.slice(0, 10);
   }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+
+  // Extract HH:mm:ss from timeVal if available
+  let timeStr = defaultTime;
+  if (timeVal instanceof Date && !isNaN(timeVal.getTime())) {
+    timeStr = timeVal.toISOString().slice(11, 19);
+  } else if (typeof timeVal === 'string' && timeVal.trim() !== '') {
+    const trimmed = timeVal.trim();
+    if (trimmed.includes('T')) {
+      const match = trimmed.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (match) {
+        timeStr = `${match[1]}:${match[2]}:${match[3] || '00'}`;
+      }
+    } else if (/^\d{1,2}:\d{2}/.test(trimmed)) {
+      const parts = trimmed.split(':');
+      const hh = parts[0].padStart(2, '0');
+      const mm = (parts[1] || '00').padStart(2, '0');
+      const ss = (parts[2] || '00').slice(0, 2).padStart(2, '0');
+      timeStr = `${hh}:${mm}:${ss}`;
+    }
+  }
+
+  const dt = new Date(`${dateStr}T${timeStr}.000Z`);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+// Validation: departure must be chronologically after arrival (combining dates and times)
+reservationSchema.pre('save', function () {
+  const checkIn = this.check_in_time || this.checkInTime;
+  const checkOut = this.check_out_time || this.checkOutTime;
+
+  const arrivalDateTime = combineDateAndTime(this.arrival_date, checkIn, '00:00:00');
+  const departureDateTime = combineDateAndTime(this.departure_date, checkOut, '00:00:00');
+
+  if (!arrivalDateTime || !departureDateTime || departureDateTime <= arrivalDateTime) {
+    throw new Error('departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.');
+  }
+
+  // Sync arrival_date and departure_date so Date comparison holds in MongoDB
+  this.arrival_date = arrivalDateTime;
+  this.departure_date = departureDateTime;
+
   // Auto-timestamps on status change
   if (this.status === 'Checked In') {
     const ts = this.checkInTime || this.check_in_time || new Date();
@@ -74,4 +126,8 @@ reservationSchema.pre('save', function () {
   }
 });
 
-module.exports = mongoose.model('Reservation', reservationSchema);
+const Reservation = mongoose.model('Reservation', reservationSchema);
+Reservation.combineDateAndTime = combineDateAndTime;
+
+module.exports = Reservation;
+

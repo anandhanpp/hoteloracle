@@ -10,6 +10,8 @@ const router = express.Router();
 async function enrich(res) {
   const obj = res.toObject ? res.toObject() : { ...res };
   obj.id = obj._id;          // keep numeric-style id field the frontend expects
+  obj.adults = obj.adults != null ? Number(obj.adults) : 1;
+  obj.children = obj.children != null ? Number(obj.children) : 0;
 
   const checkIn = obj.checkInTime || obj.check_in_time || null;
   const checkOut = obj.checkOutTime || obj.check_out_time || null;
@@ -36,7 +38,13 @@ router.get('/', async (req, res) => {
   try {
     const filter = {};
 
-    if (req.query.status)    filter.status    = req.query.status;
+    if (req.query.status) {
+      if (req.query.status.toLowerCase() === 'inhouse' || req.query.status.toLowerCase() === 'in-house') {
+        filter.status = 'Checked In';
+      } else {
+        filter.status = req.query.status;
+      }
+    }
     if (req.query.room_type) filter.room_type = req.query.room_type;
 
     if (req.query.search) {
@@ -46,6 +54,10 @@ router.get('/', async (req, res) => {
         { confirmation_number: re },
         { phone_number: re },
       ];
+    }
+
+    if (req.query.date_type === 'inhouse' && !req.query.date) {
+      filter.status = 'Checked In';
     }
 
     if (req.query.date && req.query.date_type) {
@@ -79,6 +91,8 @@ router.get('/', async (req, res) => {
       return {
         ...r,
         id: r._id,
+        adults: r.adults != null ? Number(r.adults) : 1,
+        children: r.children != null ? Number(r.children) : 0,
         checkInTime: checkIn,
         check_in_time: checkIn,
         checkOutTime: checkOut,
@@ -136,20 +150,31 @@ router.post('/', async (req, res) => {
     const initialCheckIn = checkInTime || check_in_time || (status === 'Checked In' ? new Date() : null);
     const initialCheckOut = checkOutTime || check_out_time || (status === 'Checked Out' ? new Date() : null);
 
+    // Validate full DateTime (date + check-in/out times)
+    const arrivalDT = Reservation.combineDateAndTime(arrival_date, initialCheckIn, '00:00:00');
+    const departureDT = Reservation.combineDateAndTime(departure_date, initialCheckOut, '00:00:00');
+
+    if (!arrivalDT || !departureDT || departureDT <= arrivalDT) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.',
+      });
+    }
+
     const reservation = await Reservation.create({
       room_id: resolvedRoomId,
       room_number: resolvedRoomNumber,
       guest_name,
       confirmation_number: confirmation_number.toUpperCase(),
       phone_number, membership_tier, room_type,
-      arrival_date: new Date(arrival_date),
-      departure_date: new Date(departure_date),
+      arrival_date: arrivalDT,
+      departure_date: departureDT,
       adults: Number(adults), children: Number(children),
       status,
-      checkInTime: initialCheckIn,
-      check_in_time: initialCheckIn,
-      checkOutTime: initialCheckOut,
-      check_out_time: initialCheckOut,
+      checkInTime: initialCheckIn ? arrivalDT : null,
+      check_in_time: initialCheckIn ? arrivalDT : null,
+      checkOutTime: initialCheckOut ? departureDT : null,
+      check_out_time: initialCheckOut ? departureDT : null,
       room_rate: Number(room_rate),
       payment_mode, reservation_source, billing_option,
     });
@@ -203,6 +228,22 @@ router.put('/:id', async (req, res) => {
       const ts = req.body.checkOutTime || req.body.check_out_time || (current.status !== 'Checked Out' ? now : current.checkOutTime || now);
       req.body.checkOutTime = ts;
       req.body.check_out_time = ts;
+    }
+
+    // Route-level DateTime validation
+    const nextArrDate = req.body.arrival_date !== undefined ? req.body.arrival_date : current.arrival_date;
+    const nextDepDate = req.body.departure_date !== undefined ? req.body.departure_date : current.departure_date;
+    const nextInTime = req.body.check_in_time !== undefined ? req.body.check_in_time : (req.body.checkInTime !== undefined ? req.body.checkInTime : (current.check_in_time || current.checkInTime));
+    const nextOutTime = req.body.check_out_time !== undefined ? req.body.check_out_time : (req.body.checkOutTime !== undefined ? req.body.checkOutTime : (current.check_out_time || current.checkOutTime));
+
+    const arrivalDT = Reservation.combineDateAndTime(nextArrDate, nextInTime, '00:00:00');
+    const departureDT = Reservation.combineDateAndTime(nextDepDate, nextOutTime, '00:00:00');
+
+    if (!arrivalDT || !departureDT || departureDT <= arrivalDT) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.',
+      });
     }
 
     // If checking out, mark the room dirty

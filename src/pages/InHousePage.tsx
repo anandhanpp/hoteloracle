@@ -4,6 +4,7 @@ import { useReservationSync } from '../context/ReservationContext';
 import {
   Search, RefreshCw, Loader2, AlertCircle, X, ChevronDown,
   CreditCard, LogOut, Pencil, Receipt, FileText, DoorOpen,
+  User, Baby,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -11,6 +12,7 @@ interface Reservation {
   id: number;
   guest_name: string;
   confirmation_number: string;
+  room_number?: string | null;
   room_type: string;
   arrival_date: string;
   departure_date: string;
@@ -40,13 +42,16 @@ const nights = (arr: string, dep: string) => {
 const balance = (r: Reservation) =>
   (r.room_rate * nights(r.arrival_date, r.departure_date)).toFixed(2);
 
-// Room number synthesised from confirmation_number for demo purposes
+// Room number synthesised from confirmation_number for demo fallback
 const roomNum = (r: Reservation) => {
   const hash = r.confirmation_number
     .split('')
     .reduce((acc, c) => acc + c.charCodeAt(0), 0);
   return 100 + (hash % 900);
 };
+
+const getRoomNumber = (r: Reservation) => r.room_number || String(roomNum(r));
+
 
 // Membership badge colour
 const tierBadge: Record<string, string> = {
@@ -85,41 +90,19 @@ export default function InHousePage() {
   const modalRef                        = useRef<HTMLDivElement>(null);
 
   // ── Fetch in-house reservations ───────────────────────────────────────────
-  const fetchInHouse = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res  = await fetch('/api/reservations?status=Checked+In');
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const data: Reservation[] = await res.json();
-      setReservations(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchInHouse(); }, [refreshToken]);
-
-  // Close modal on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
-        setIwantOpen(false);
-      }
-    };
-    if (iwantOpen) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [iwantOpen]);
-
-  // ── Filtered list ─────────────────────────────────────────────────────────
+    // ── Filtered list ─────────────────────────────────────────────────────────
   const q = search.toLowerCase();
   const filtered = reservations.filter((r) =>
     r.guest_name.toLowerCase().includes(q) ||
-    String(roomNum(r)).includes(q) ||
-    r.confirmation_number.toLowerCase().includes(q)
+    getRoomNumber(r).toLowerCase().includes(q) ||
+    r.confirmation_number.toLowerCase().includes(q) ||
+    r.room_type.toLowerCase().includes(q)
   );
+
+  const totalInHouseRooms    = filtered.length;
+  const totalInHouseAdults   = filtered.reduce((sum, r) => sum + (r.adults ?? 1), 0);
+  const totalInHouseChildren = filtered.reduce((sum, r) => sum + (r.children ?? 0), 0);
+  const totalInHouseGuests   = totalInHouseAdults + totalInHouseChildren;
 
   const selected = reservations.find((r) => r.id === selectedId) ?? null;
 
@@ -168,7 +151,7 @@ export default function InHousePage() {
         <div>
           <h1 className="text-xl font-semibold text-gray-800">In House</h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Currently checked-in guests
+            Currently checked-in guests &amp; live room occupancy
           </p>
         </div>
         <div className="flex items-center space-x-2">
@@ -195,30 +178,47 @@ export default function InHousePage() {
         </div>
       </div>
 
-      {/* ── Search bar ─────────────────────────────────────────────────── */}
-      <div className="bg-[#e8e8e8] border-b border-gray-300 px-5 py-2 flex items-center space-x-2">
-        <div className="relative flex-1 max-w-md">
-          <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-2.5" />
-          <input
-            id="inhouse-search"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by guest name, room number, or confirmation #..."
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#00828A] focus:border-[#00828A] bg-white"
-          />
+      {/* ── Search & Occupancy Overview bar ──────────────────────────────── */}
+      <div className="bg-[#e8e8e8] border-b border-gray-300 px-5 py-2 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center space-x-2 flex-1 max-w-md">
+          <div className="relative w-full">
+            <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-2.5" />
+            <input
+              id="inhouse-search"
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by guest name, room number, confirmation #, room type..."
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#00828A] focus:border-[#00828A] bg-white"
+            />
+          </div>
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        {search && (
-          <button
-            onClick={() => setSearch('')}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-        <span className="text-xs text-gray-500 ml-2">
-          {loading ? 'Loading…' : `${filtered.length} guest${filtered.length !== 1 ? 's' : ''} in house`}
-        </span>
+
+        {/* Live occupancy summary pills */}
+        <div className="flex items-center space-x-2 text-xs">
+          <span className="bg-white border border-gray-300 px-2.5 py-1 rounded text-gray-700 font-medium shadow-xs">
+            Rooms: <strong>{totalInHouseRooms}</strong>
+          </span>
+          <span className="inline-flex items-center space-x-1 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded text-blue-700 font-semibold shadow-xs">
+            <User className="w-3.5 h-3.5 text-blue-600" />
+            <span>Adults: <strong>{totalInHouseAdults}</strong></span>
+          </span>
+          <span className="inline-flex items-center space-x-1 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded text-amber-700 font-semibold shadow-xs">
+            <Baby className="w-3.5 h-3.5 text-amber-600" />
+            <span>Children: <strong>{totalInHouseChildren}</strong></span>
+          </span>
+          <span className="bg-teal-50 border border-teal-200 px-2.5 py-1 rounded text-teal-800 font-semibold shadow-xs">
+            Total Guests: <strong>{totalInHouseGuests}</strong>
+          </span>
+        </div>
       </div>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
@@ -259,6 +259,8 @@ export default function InHousePage() {
                   <th className="px-4 py-3 text-left font-semibold">Room</th>
                   <th className="px-4 py-3 text-left font-semibold">Guest Name</th>
                   <th className="px-4 py-3 text-left font-semibold">Room Type</th>
+                  <th className="px-3 py-3 text-center font-semibold">Adults</th>
+                  <th className="px-3 py-3 text-center font-semibold">Children</th>
                   <th className="px-4 py-3 text-left font-semibold">Arrival</th>
                   <th className="px-4 py-3 text-left font-semibold">Departure</th>
                   <th className="px-4 py-3 text-left font-semibold">Nights</th>
@@ -269,6 +271,9 @@ export default function InHousePage() {
               <tbody>
                 {filtered.map((r, idx) => {
                   const isSelected = r.id === selectedId;
+                  const adultsCount = r.adults ?? 1;
+                  const childrenCount = r.children ?? 0;
+
                   return (
                     <tr
                       key={r.id}
@@ -290,7 +295,7 @@ export default function InHousePage() {
                       {/* Room */}
                       <td className="px-4 py-3">
                         <span className="font-mono font-semibold text-[#00828A]">
-                          {roomNum(r)}
+                          {getRoomNumber(r)}
                         </span>
                       </td>
 
@@ -309,6 +314,32 @@ export default function InHousePage() {
 
                       {/* Room Type */}
                       <td className="px-4 py-3 text-gray-600">{r.room_type}</td>
+
+                      {/* Adults Column */}
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
+                        <span
+                          title={`${adultsCount} Adult${adultsCount !== 1 ? 's' : ''}`}
+                          className="inline-flex items-center justify-center space-x-1.5 bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full text-xs font-semibold border border-blue-200"
+                        >
+                          <User className="w-3.5 h-3.5 text-blue-600" />
+                          <span>{adultsCount}</span>
+                        </span>
+                      </td>
+
+                      {/* Children Column */}
+                      <td className="px-3 py-3 text-center whitespace-nowrap">
+                        <span
+                          title={`${childrenCount} Child${childrenCount !== 1 ? 'ren' : ''}`}
+                          className={`inline-flex items-center justify-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                            childrenCount > 0
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-gray-50 text-gray-400 border-gray-200'
+                          }`}
+                        >
+                          <Baby className={`w-3.5 h-3.5 ${childrenCount > 0 ? 'text-amber-600' : 'text-gray-400'}`} />
+                          <span>{childrenCount}</span>
+                        </span>
+                      </td>
 
                       {/* Arrival */}
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmt(r.arrival_date)}</td>
@@ -337,7 +368,7 @@ export default function InHousePage() {
                           className="inline-flex items-center space-x-1 bg-[#0066CC] hover:bg-[#004FA3] text-white text-xs px-3 py-1.5 rounded transition-colors font-medium whitespace-nowrap"
                         >
                           <span>I Want To...</span>
-                          <ChevronDown className="w-3 h-3" />
+                          <ChevronDown className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -347,10 +378,16 @@ export default function InHousePage() {
             </table>
 
             {/* Footer */}
-            <div className="bg-gray-50 border-t border-gray-200 px-4 py-2 flex items-center justify-between text-xs text-gray-500">
-              <span>
-                Showing {filtered.length} of {reservations.length} in-house guests
-              </span>
+            <div className="bg-gray-50 border-t border-gray-200 px-4 py-2.5 flex items-center justify-between text-xs text-gray-500 flex-wrap gap-2">
+              <div className="flex items-center space-x-3">
+                <span>
+                  Showing <strong>{filtered.length}</strong> of <strong>{reservations.length}</strong> in-house rooms
+                </span>
+                <span>·</span>
+                <span className="text-gray-700">
+                  Occupancy: <strong>{totalInHouseGuests}</strong> guests (<strong>{totalInHouseAdults}</strong> adults, <strong>{totalInHouseChildren}</strong> children)
+                </span>
+              </div>
               <span>Click a row to select, then use "I Want To…" for actions</span>
             </div>
           </div>
@@ -373,7 +410,7 @@ export default function InHousePage() {
               <div>
                 <h2 className="text-base font-semibold text-gray-800">I Want To...</h2>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Room {roomNum(selected)} — {selected.guest_name}
+                  Room {getRoomNumber(selected)} — {selected.guest_name} ({selected.adults ?? 1} Adult{(selected.adults ?? 1) !== 1 ? 's' : ''}{(selected.children ?? 0) > 0 ? `, ${selected.children} Child${selected.children !== 1 ? 'ren' : ''}` : ''})
                 </p>
               </div>
               <button
