@@ -220,7 +220,7 @@ const updateReservationHandler = async (req, res) => {
     const now = new Date();
 
     if (newStatus === 'Checked In') {
-      const ts = req.body.checkInTime || req.body.check_in_time || (current.status !== 'Checked In' ? now : current.checkInTime || now);
+      const ts = req.body.checkInTime || req.body.check_in_time || current.checkInTime || current.check_in_time || current.arrival_date || now;
       req.body.checkInTime = ts;
       req.body.check_in_time = ts;
     }
@@ -234,17 +234,41 @@ const updateReservationHandler = async (req, res) => {
       }
     }
 
-    // Route-level DateTime validation
+    // Route-level DateTime validation (comparing full DateTime objects, not raw calendar dates)
     const nextArrDate = req.body.arrival_date !== undefined ? req.body.arrival_date : current.arrival_date;
     const nextDepDate = req.body.departure_date !== undefined ? req.body.departure_date : current.departure_date;
-    const nextInTime = req.body.check_in_time !== undefined ? req.body.check_in_time : (req.body.checkInTime !== undefined ? req.body.checkInTime : (current.check_in_time || current.checkInTime));
-    const nextOutTime = req.body.check_out_time !== undefined ? req.body.check_out_time : (req.body.checkOutTime !== undefined ? req.body.checkOutTime : (current.check_out_time || current.checkOutTime));
+    const nextInTime = req.body.check_in_time !== undefined 
+      ? req.body.check_in_time 
+      : (req.body.checkInTime !== undefined 
+          ? req.body.checkInTime 
+          : (current.check_in_time || current.checkInTime || current.arrival_date));
+    const nextOutTime = req.body.check_out_time !== undefined 
+      ? req.body.check_out_time 
+      : (req.body.checkOutTime !== undefined 
+          ? req.body.checkOutTime 
+          : (current.check_out_time || current.checkOutTime || current.departure_date));
 
     let arrivalDT = Reservation.combineDateAndTime(nextArrDate, nextInTime, '00:00:00');
     let departureDT = Reservation.combineDateAndTime(nextDepDate, nextOutTime, '00:00:00');
 
-    // For Checked Out: if departureDT <= arrivalDT (e.g. checkin time was scheduled later today or early departure),
-    // ensure arrivalDT is adjusted to 1 minute prior to checkout so check-out is never blocked
+    // On same-day stays during room assignment / check-in:
+    // If checkOutTime was chronologically after checkInTime in the reservation booking,
+    // ensure departureDT retains its scheduled departure time
+    if (newStatus === 'Checked In' && arrivalDT && departureDT && departureDT <= arrivalDT) {
+      const originalArrival = Reservation.combineDateAndTime(current.arrival_date, current.check_in_time || current.checkInTime || current.arrival_date, '00:00:00');
+      const originalDeparture = Reservation.combineDateAndTime(current.departure_date, current.check_out_time || current.checkOutTime || current.departure_date, '00:00:00');
+
+      if (originalArrival && originalDeparture && originalDeparture > originalArrival) {
+        arrivalDT = originalArrival;
+        departureDT = originalDeparture;
+        req.body.checkInTime = originalArrival;
+        req.body.check_in_time = originalArrival;
+        req.body.arrival_date = originalArrival;
+        req.body.departure_date = originalDeparture;
+      }
+    }
+
+    // For Checked Out: if departureDT <= arrivalDT, ensure arrivalDT is adjusted to 1 minute prior to checkout
     if (newStatus === 'Checked Out' && arrivalDT && departureDT && departureDT <= arrivalDT) {
       const adjustedArrival = new Date(departureDT.getTime() - 60 * 1000);
       arrivalDT = adjustedArrival;
@@ -259,6 +283,10 @@ const updateReservationHandler = async (req, res) => {
         message: 'departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.',
       });
     }
+
+    // Sync arrival_date and departure_date as full DateTime objects
+    req.body.arrival_date = arrivalDT;
+    req.body.departure_date = departureDT;
 
     // If checking out, mark the room dirty
     if (newStatus === 'Checked Out') {
@@ -291,6 +319,14 @@ const updateReservationHandler = async (req, res) => {
 
 router.put('/:id', updateReservationHandler);
 router.patch('/:id', updateReservationHandler);
+
+// Dedicated Check-In Route
+const checkinReservationHandler = async (req, res) => {
+  req.body = { ...req.body, status: 'Checked In' };
+  return updateReservationHandler(req, res);
+};
+router.put('/:id/checkin', checkinReservationHandler);
+router.patch('/:id/checkin', checkinReservationHandler);
 
 // Dedicated Checkout Route
 const checkoutReservationHandler = async (req, res) => {

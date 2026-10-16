@@ -58,17 +58,27 @@ const reservationSchema = new mongoose.Schema(
 
 /**
  * Combines a calendar date and an optional time/datetime into a unified Date object.
- * Extracts date (YYYY-MM-DD) from dateVal and time (HH:mm:ss) from timeVal.
+ * Extracts date (YYYY-MM-DD) from dateVal and time (HH:mm:ss) from timeVal or embedded date time.
  */
 function combineDateAndTime(dateVal, timeVal, defaultTime = '00:00:00') {
   if (!dateVal) return null;
 
-  // Extract YYYY-MM-DD
+  // Extract YYYY-MM-DD and any embedded time from dateVal
   let dateStr = '';
+  let embeddedTime = null;
+
   if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
     dateStr = dateVal.toISOString().slice(0, 10);
+    const t = dateVal.toISOString().slice(11, 19);
+    if (t !== '00:00:00') embeddedTime = t;
   } else if (typeof dateVal === 'string') {
     dateStr = dateVal.slice(0, 10);
+    if (dateVal.includes('T')) {
+      const match = dateVal.match(/T(\d{2}:\d{2}(?::\d{2})?)/);
+      if (match) {
+        embeddedTime = match[1].length === 5 ? `${match[1]}:00` : match[1];
+      }
+    }
   }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
@@ -91,6 +101,8 @@ function combineDateAndTime(dateVal, timeVal, defaultTime = '00:00:00') {
       const ss = (parts[2] || '00').slice(0, 2).padStart(2, '0');
       timeStr = `${hh}:${mm}:${ss}`;
     }
+  } else if (embeddedTime) {
+    timeStr = embeddedTime;
   }
 
   const dt = new Date(`${dateStr}T${timeStr}.000Z`);
@@ -103,7 +115,7 @@ reservationSchema.pre('save', function () {
 
   // Auto-timestamps on status change
   if (this.status === 'Checked In') {
-    const ts = this.checkInTime || this.check_in_time || now;
+    const ts = this.checkInTime || this.check_in_time || this.arrival_date || now;
     this.checkInTime = ts;
     this.check_in_time = ts;
   }
@@ -116,11 +128,20 @@ reservationSchema.pre('save', function () {
     }
   }
 
-  const checkIn = this.check_in_time || this.checkInTime;
-  const checkOut = this.check_out_time || this.checkOutTime;
+  const checkIn = this.check_in_time || this.checkInTime || this.arrival_date;
+  const checkOut = this.check_out_time || this.checkOutTime || this.departure_date;
 
   let arrivalDateTime = combineDateAndTime(this.arrival_date, checkIn, '00:00:00');
   let departureDateTime = combineDateAndTime(this.departure_date, checkOut, '00:00:00');
+
+  // Handle same-day stays during check-in: if checkOut was after checkIn, ensure full DateTime holds
+  if (this.status === 'Checked In' && arrivalDateTime && departureDateTime && departureDateTime <= arrivalDateTime) {
+    const originalDep = combineDateAndTime(this.departure_date, this.departure_date, '00:00:00');
+    if (originalDep && originalDep > arrivalDateTime) {
+      departureDateTime = originalDep;
+      this.departure_date = originalDep;
+    }
+  }
 
   // If checking out and departureDateTime <= arrivalDateTime, adjust arrival to 1 minute before checkout
   if (this.status === 'Checked Out' && arrivalDateTime && departureDateTime && departureDateTime <= arrivalDateTime) {
@@ -134,7 +155,7 @@ reservationSchema.pre('save', function () {
     throw new Error('departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.');
   }
 
-  // Sync arrival_date and departure_date so Date comparison holds in MongoDB
+  // Sync arrival_date and departure_date so full Date/Time comparison holds in MongoDB
   this.arrival_date = arrivalDateTime;
   this.departure_date = departureDateTime;
 });
