@@ -97,13 +97,38 @@ function combineDateAndTime(dateVal, timeVal, defaultTime = '00:00:00') {
   return isNaN(dt.getTime()) ? null : dt;
 }
 
-// Validation: departure must be chronologically after arrival (combining dates and times)
+// Validation & Auto-timestamps on save
 reservationSchema.pre('save', function () {
+  const now = new Date();
+
+  // Auto-timestamps on status change
+  if (this.status === 'Checked In') {
+    const ts = this.checkInTime || this.check_in_time || now;
+    this.checkInTime = ts;
+    this.check_in_time = ts;
+  }
+  if (this.status === 'Checked Out') {
+    const ts = this.checkOutTime || this.check_out_time || now;
+    this.checkOutTime = ts;
+    this.check_out_time = ts;
+    if (!this.departure_date) {
+      this.departure_date = ts;
+    }
+  }
+
   const checkIn = this.check_in_time || this.checkInTime;
   const checkOut = this.check_out_time || this.checkOutTime;
 
-  const arrivalDateTime = combineDateAndTime(this.arrival_date, checkIn, '00:00:00');
-  const departureDateTime = combineDateAndTime(this.departure_date, checkOut, '00:00:00');
+  let arrivalDateTime = combineDateAndTime(this.arrival_date, checkIn, '00:00:00');
+  let departureDateTime = combineDateAndTime(this.departure_date, checkOut, '00:00:00');
+
+  // If checking out and departureDateTime <= arrivalDateTime, adjust arrival to 1 minute before checkout
+  if (this.status === 'Checked Out' && arrivalDateTime && departureDateTime && departureDateTime <= arrivalDateTime) {
+    arrivalDateTime = new Date(departureDateTime.getTime() - 60 * 1000);
+    this.arrival_date = arrivalDateTime;
+    this.checkInTime = arrivalDateTime;
+    this.check_in_time = arrivalDateTime;
+  }
 
   if (!arrivalDateTime || !departureDateTime || departureDateTime <= arrivalDateTime) {
     throw new Error('departure_date must be after arrival_date. For same-day stays, check_out_time must be chronologically after check_in_time.');
@@ -112,18 +137,6 @@ reservationSchema.pre('save', function () {
   // Sync arrival_date and departure_date so Date comparison holds in MongoDB
   this.arrival_date = arrivalDateTime;
   this.departure_date = departureDateTime;
-
-  // Auto-timestamps on status change
-  if (this.status === 'Checked In') {
-    const ts = this.checkInTime || this.check_in_time || new Date();
-    this.checkInTime = ts;
-    this.check_in_time = ts;
-  }
-  if (this.status === 'Checked Out') {
-    const ts = this.checkOutTime || this.check_out_time || new Date();
-    this.checkOutTime = ts;
-    this.check_out_time = ts;
-  }
 });
 
 const Reservation = mongoose.model('Reservation', reservationSchema);

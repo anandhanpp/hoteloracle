@@ -9,7 +9,8 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Reservation {
-  id: number;
+  id: number | string;
+  _id?: string;
   guest_name: string;
   confirmation_number: string;
   room_number?: string | null;
@@ -69,14 +70,14 @@ interface IWantToItem {
   icon: React.ElementType;
   group: 'modify' | 'create' | 'view' | 'goto';
   groupLabel: string;
-  action?: (id: number) => void;
+  action?: (id: number | string) => void;
   danger?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function InHousePage() {
   const navigate = useNavigate();
-  const { refreshToken } = useReservationSync();
+  const { refreshToken, triggerRefresh } = useReservationSync();
 
   // ── Data state ────────────────────────────────────────────────────────────
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -85,8 +86,9 @@ export default function InHousePage() {
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [search, setSearch]             = useState('');
-  const [selectedId, setSelectedId]     = useState<number | null>(null);
+  const [selectedId, setSelectedId]     = useState<number | string | null>(null);
   const [iwantOpen, setIwantOpen]       = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const modalRef                        = useRef<HTMLDivElement>(null);
 
   // ── Fetch in-house reservations ───────────────────────────────────────────
@@ -138,8 +140,8 @@ export default function InHousePage() {
 
   // ── I Want To menu items ─────────────────────────────────────────────────
   const menuItems: IWantToItem[] = [
-    { id: 'checkout',       label: 'Check Out',         icon: LogOut,     group: 'modify',  groupLabel: 'Modify / Update' },
-    { id: 'checkout-early', label: 'Check Out Early',   icon: DoorOpen,   group: 'modify',  groupLabel: 'Modify / Update' },
+    { id: 'checkout',       label: 'Check Out',         icon: LogOut,     group: 'modify',  groupLabel: 'Modify / Update', danger: true },
+    { id: 'checkout-early', label: 'Check Out Early',   icon: DoorOpen,   group: 'modify',  groupLabel: 'Modify / Update', danger: true },
     { id: 'edit-payment',   label: 'Edit Payment',      icon: CreditCard, group: 'modify',  groupLabel: 'Modify / Update' },
     { id: 'edit-res',       label: 'Edit Reservation',  icon: Pencil,     group: 'modify',  groupLabel: 'Modify / Update' },
     { id: 'invoice',        label: 'Pro-forma Invoice',  icon: FileText,   group: 'create',  groupLabel: 'Create' },
@@ -155,10 +157,70 @@ export default function InHousePage() {
     { key: 'goto',   label: '→ Go To' },
   ];
 
-  const handleMenuAction = (id: string) => {
+  // ── Action: Check Out Guest ───────────────────────────────────────────────
+  const handleCheckOut = async (reservation: Reservation) => {
+    if (actionLoading) return;
+    setActionLoading(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const payload = {
+        status: 'Checked Out',
+        checkOutTime: nowIso,
+        check_out_time: nowIso,
+      };
+
+      // Send PATCH request with PUT fallback
+      let res = await fetch(`/api/reservations/${reservation.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        res = await fetch(`/api/reservations/${reservation.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || `Check out failed with status ${res.status}`);
+      }
+
+      // UI State: instantly remove from active In-House table
+      setReservations((prev) => prev.filter((r) => r.id !== reservation.id));
+      setSelectedId(null);
+      setIwantOpen(false);
+
+      // Trigger global synchronization context
+      triggerRefresh();
+
+      // View Transition: redirect staff directly over to Departures view
+      navigate('/departures');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to check out guest');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMenuAction = async (id: string) => {
     if (!selected) return;
+    if (id === 'checkout' || id === 'checkout-early') {
+      await handleCheckOut(selected);
+      return;
+    }
     if (id === 'billing') {
       navigate(`/billing/${selected.id}`);
+      setIwantOpen(false);
+      return;
+    }
+    if (id === 'edit-res') {
+      navigate(`/bookings`);
+      setIwantOpen(false);
+      return;
     }
     setIwantOpen(false);
   };
@@ -462,23 +524,33 @@ export default function InHousePage() {
                   <div className="flex flex-col space-y-1">
                     {menuItems
                       .filter((m) => m.group === g.key)
-                      .map((m) => (
-                        <button
-                          key={m.id}
-                          id={`iwant-action-${m.id}`}
-                          onClick={() => handleMenuAction(m.id)}
-                          className={`flex items-center space-x-2 text-left text-sm px-2 py-1.5 rounded hover:bg-[#e8f5f5] transition-colors group ${
-                            m.id === 'billing'
-                              ? 'text-[#0066CC] font-semibold hover:bg-blue-50'
-                              : m.danger
-                              ? 'text-red-600 hover:bg-red-50'
-                              : 'text-[#00828A] hover:text-[#006066]'
-                          }`}
-                        >
-                          <m.icon className="w-3.5 h-3.5 flex-shrink-0" />
-                          <span>{m.label}</span>
-                        </button>
-                      ))}
+                      .map((m) => {
+                        const isCheckingOutThis = (m.id === 'checkout' || m.id === 'checkout-early') && actionLoading;
+                        return (
+                          <button
+                            key={m.id}
+                            id={`iwant-action-${m.id}`}
+                            disabled={actionLoading}
+                            onClick={() => handleMenuAction(m.id)}
+                            className={`flex items-center space-x-2 text-left text-sm px-2 py-1.5 rounded hover:bg-[#e8f5f5] transition-colors group ${
+                              actionLoading ? 'opacity-50 cursor-not-allowed' : ''
+                            } ${
+                              m.id === 'billing'
+                                ? 'text-[#0066CC] font-semibold hover:bg-blue-50'
+                                : m.danger
+                                ? 'text-red-600 hover:bg-red-50 font-medium'
+                                : 'text-[#00828A] hover:text-[#006066]'
+                            }`}
+                          >
+                            {isCheckingOutThis ? (
+                              <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin text-red-600" />
+                            ) : (
+                              <m.icon className="w-3.5 h-3.5 flex-shrink-0" />
+                            )}
+                            <span>{isCheckingOutThis ? 'Checking Out...' : m.label}</span>
+                          </button>
+                        );
+                      })}
                   </div>
                 </div>
               ))}

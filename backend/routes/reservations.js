@@ -189,8 +189,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── PUT /api/reservations/:id ─────────────────────────────────────────────────
-router.put('/:id', async (req, res) => {
+// ── UPDATE (PUT / PATCH) /api/reservations/:id ────────────────────────────────
+const updateReservationHandler = async (req, res) => {
   try {
     const current = await Reservation.findById(req.params.id);
     if (!current) {
@@ -225,9 +225,13 @@ router.put('/:id', async (req, res) => {
       req.body.check_in_time = ts;
     }
     if (newStatus === 'Checked Out') {
-      const ts = req.body.checkOutTime || req.body.check_out_time || (current.status !== 'Checked Out' ? now : current.checkOutTime || now);
+      // Capture current exact Date/Time automatically
+      const ts = req.body.checkOutTime || req.body.check_out_time || now;
       req.body.checkOutTime = ts;
       req.body.check_out_time = ts;
+      if (!req.body.departure_date) {
+        req.body.departure_date = ts;
+      }
     }
 
     // Route-level DateTime validation
@@ -236,8 +240,18 @@ router.put('/:id', async (req, res) => {
     const nextInTime = req.body.check_in_time !== undefined ? req.body.check_in_time : (req.body.checkInTime !== undefined ? req.body.checkInTime : (current.check_in_time || current.checkInTime));
     const nextOutTime = req.body.check_out_time !== undefined ? req.body.check_out_time : (req.body.checkOutTime !== undefined ? req.body.checkOutTime : (current.check_out_time || current.checkOutTime));
 
-    const arrivalDT = Reservation.combineDateAndTime(nextArrDate, nextInTime, '00:00:00');
-    const departureDT = Reservation.combineDateAndTime(nextDepDate, nextOutTime, '00:00:00');
+    let arrivalDT = Reservation.combineDateAndTime(nextArrDate, nextInTime, '00:00:00');
+    let departureDT = Reservation.combineDateAndTime(nextDepDate, nextOutTime, '00:00:00');
+
+    // For Checked Out: if departureDT <= arrivalDT (e.g. checkin time was scheduled later today or early departure),
+    // ensure arrivalDT is adjusted to 1 minute prior to checkout so check-out is never blocked
+    if (newStatus === 'Checked Out' && arrivalDT && departureDT && departureDT <= arrivalDT) {
+      const adjustedArrival = new Date(departureDT.getTime() - 60 * 1000);
+      arrivalDT = adjustedArrival;
+      req.body.arrival_date = adjustedArrival;
+      req.body.checkInTime = adjustedArrival;
+      req.body.check_in_time = adjustedArrival;
+    }
 
     if (!arrivalDT || !departureDT || departureDT <= arrivalDT) {
       return res.status(400).json({
@@ -247,8 +261,12 @@ router.put('/:id', async (req, res) => {
     }
 
     // If checking out, mark the room dirty
-    if (newStatus === 'Checked Out' && current.room_id) {
-      await Room.findByIdAndUpdate(current.room_id, { housekeeping_status: 'Dirty' });
+    if (newStatus === 'Checked Out') {
+      if (current.room_id) {
+        await Room.findByIdAndUpdate(current.room_id, { housekeeping_status: 'Dirty' });
+      } else if (current.room_number) {
+        await Room.findOneAndUpdate({ room_number: String(current.room_number).trim() }, { housekeeping_status: 'Dirty' });
+      }
     }
 
     // Confirmation numbers are upper-cased
@@ -269,7 +287,18 @@ router.put('/:id', async (req, res) => {
     console.error('Error updating reservation:', err.message);
     res.status(500).json({ status: 'error', message: err.message });
   }
-});
+};
+
+router.put('/:id', updateReservationHandler);
+router.patch('/:id', updateReservationHandler);
+
+// Dedicated Checkout Route
+const checkoutReservationHandler = async (req, res) => {
+  req.body = { ...req.body, status: 'Checked Out' };
+  return updateReservationHandler(req, res);
+};
+router.put('/:id/checkout', checkoutReservationHandler);
+router.patch('/:id/checkout', checkoutReservationHandler);
 
 // ── DELETE /api/reservations/:id ──────────────────────────────────────────────
 router.delete('/:id', async (req, res) => {
