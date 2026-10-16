@@ -90,7 +90,37 @@ export default function InHousePage() {
   const modalRef                        = useRef<HTMLDivElement>(null);
 
   // ── Fetch in-house reservations ───────────────────────────────────────────
-    // ── Filtered list ─────────────────────────────────────────────────────────
+  const fetchInHouse = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/reservations?status=Checked+In');
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data: Reservation[] = await res.json();
+      setReservations(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInHouse();
+  }, [refreshToken]);
+
+  // Close modal on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        setIwantOpen(false);
+      }
+    };
+    if (iwantOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [iwantOpen]);
+
+  // ── Filtered list ─────────────────────────────────────────────────────────
   const q = search.toLowerCase();
   const filtered = reservations.filter((r) =>
     r.guest_name.toLowerCase().includes(q) ||
