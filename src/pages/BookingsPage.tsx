@@ -64,33 +64,69 @@ const nightsBetween = (a: string, b: string) =>
  */
 const combineDateAndTime = (dateVal: string | Date, timeVal?: string | Date | null, defaultTime = "00:00:00"): Date | null => {
     if (!dateVal) return null;
+
+    // 1. If timeVal is a direct local datetime string from <input type="datetime-local">
+    if (typeof timeVal === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timeVal) && !timeVal.includes("Z")) {
+        const [dPart, tPart] = timeVal.split("T");
+        let dateStr = "";
+        if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, "0");
+            dateStr = `${dateVal.getFullYear()}-${pad(dateVal.getMonth() + 1)}-${pad(dateVal.getDate())}`;
+        } else if (typeof dateVal === "string") {
+            dateStr = dateVal.slice(0, 10);
+        }
+        const finalDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : dPart;
+        const [y, m, d] = finalDate.split("-").map(Number);
+        const [hh, mm, ss] = tPart.split(":").map(Number);
+        const dt = new Date(y, m - 1, d, hh, mm, ss || 0);
+        return isNaN(dt.getTime()) ? null : dt;
+    }
+
+    // 2. Extract calendar date YYYY-MM-DD from dateVal
     let dateStr = "";
     if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
-        dateStr = dateVal.toISOString().slice(0, 10);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        dateStr = `${dateVal.getFullYear()}-${pad(dateVal.getMonth() + 1)}-${pad(dateVal.getDate())}`;
     } else if (typeof dateVal === "string") {
         dateStr = dateVal.slice(0, 10);
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
 
+    // 3. Extract time part
     let timeStr = defaultTime;
-    if (timeVal instanceof Date && !isNaN(timeVal.getTime())) {
-        timeStr = timeVal.toISOString().slice(11, 19);
-    } else if (typeof timeVal === "string" && timeVal.trim() !== "") {
-        const trimmed = timeVal.trim();
-        if (trimmed.includes("T")) {
-            const match = trimmed.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
-            if (match) timeStr = `${match[1]}:${match[2]}:${match[3] || "00"}`;
-        } else if (/^\d{1,2}:\d{2}/.test(trimmed)) {
-            const parts = trimmed.split(":");
-            timeStr = `${parts[0].padStart(2, "0")}:${(parts[1] || "00").padStart(2, "0")}:${((parts[2] || "00").slice(0, 2)).padStart(2, "0")}`;
+    if (timeVal) {
+        if (typeof timeVal === "string") {
+            const trimmed = timeVal.trim();
+            if (trimmed.includes("T") && !trimmed.includes("Z")) {
+                const match = trimmed.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+                if (match) timeStr = `${match[1]}:${match[2]}:${match[3] || "00"}`;
+            } else if (/^\d{1,2}:\d{2}/.test(trimmed)) {
+                const parts = trimmed.split(":");
+                timeStr = `${parts[0].padStart(2, "0")}:${(parts[1] || "00").padStart(2, "0")}:${((parts[2] || "00").slice(0, 2)).padStart(2, "0")}`;
+            } else {
+                const d = new Date(trimmed);
+                if (!isNaN(d.getTime())) {
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                }
+            }
+        } else if (timeVal instanceof Date && !isNaN(timeVal.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, "0");
+            timeStr = `${pad(timeVal.getHours())}:${pad(timeVal.getMinutes())}:${pad(timeVal.getSeconds())}`;
         }
     }
-    const dt = new Date(`${dateStr}T${timeStr}.000Z`);
+
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const [hh, mm, ss] = timeStr.split(":").map(Number);
+    const dt = new Date(y, m - 1, d, hh, mm, ss || 0);
     return isNaN(dt.getTime()) ? null : dt;
 };
 
 const formatForDateTimeLocal = (val?: string | null): string => {
     if (!val) return "";
+    if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(val) && !val.includes("Z")) {
+        return val.slice(0, 16);
+    }
     try {
         const d = new Date(val);
         if (isNaN(d.getTime())) return "";
@@ -295,10 +331,10 @@ function BookingModal({mode,initial,saving,error,onClose,onSubmit}:ModalProps){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
             <FormField label="Check-In Time" id="modal-check-in-time">
-              <input id="modal-check-in-time" type="datetime-local" value={formatForDateTimeLocal(form.check_in_time)} onChange={e=>set("check_in_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
+              <input id="modal-check-in-time" type="datetime-local" value={formatForDateTimeLocal(form.check_in_time)} onChange={e=>set("check_in_time",e.target.value)} style={INP}/>
             </FormField>
             <FormField label="Check-Out Time" id="modal-check-out-time">
-              <input id="modal-check-out-time" type="datetime-local" value={formatForDateTimeLocal(form.check_out_time)} onChange={e=>set("check_out_time",e.target.value?new Date(e.target.value).toISOString():"")} style={INP}/>
+              <input id="modal-check-out-time" type="datetime-local" value={formatForDateTimeLocal(form.check_out_time)} onChange={e=>set("check_out_time",e.target.value)} style={INP}/>
             </FormField>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
